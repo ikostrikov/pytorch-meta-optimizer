@@ -41,8 +41,7 @@ for epoch in range(args.max_epoch):
         # Reset lstm values of the meta optimizer
         meta_optimizer.reset_lstm()
 
-        x, y = get_batch(args.batch_size
-)
+        x, y = get_batch(args.batch_size)
         x, y = Variable(x), Variable(y)
 
         # Compute initial loss of the model
