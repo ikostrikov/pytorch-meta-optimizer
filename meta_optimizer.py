@@ -24,9 +24,13 @@ class MetaOptimizer(nn.Module):
 
         self.reset_lstm()
 
-    def reset_lstm(self):
-        self.hx = Variable(torch.zeros(1, self.hidden_size))
-        self.cx = Variable(torch.zeros(1, self.hidden_size))
+    def reset_lstm(self, keep_states=False):
+        if keep_states:
+            self.hx = Variable(self.hx.data)
+            self.cx = Variable(self.cx.data)
+        else:
+            self.hx = Variable(torch.zeros(1, self.hidden_size))
+            self.cx = Variable(torch.zeros(1, self.hidden_size))
 
     def forward(self, inputs):
         initial_size = inputs.size()
