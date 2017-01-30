@@ -7,8 +7,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from data import get_batch
-from meta_optimizer import MetaOptimizer
-from model import MetaModel, Model
+from meta_optimizer import MetaModel, MetaOptimizer
+from model import Model
 from torch.autograd import Variable
 
 parser = argparse.ArgumentParser(description='PyTorch REINFORCE example')
@@ -28,8 +28,11 @@ args = parser.parse_args()
 
 assert args.optimizer_steps % args.truncated_bptt_step == 0
 
-meta_optimizer = MetaOptimizer(args.hidden_size)
+# Create a meta optimizer that wraps a model into a meta model
+# to keep track of the meta updates.
+meta_optimizer = MetaOptimizer(MetaModel(Model()), args.hidden_size)
 optimizer = optim.Adam(meta_optimizer.parameters(), lr=1e-3)
+loss_fn = lambda f_x, y: (f_x - y).pow(2).mean()
 
 for epoch in range(args.max_epoch):
     decrease_in_loss = 0.0
@@ -43,15 +46,11 @@ for epoch in range(args.max_epoch):
 
         # Compute initial loss of the model
         f_x = model(x)
-        initial_loss = (f_x - y).pow(2).mean()
+        initial_loss = loss_fn(f_x, y)
 
         for k in range(args.optimizer_steps // args.truncated_bptt_step):
             # Keep states for truncated BPTT
-            meta_optimizer.reset_lstm(keep_states=k > 0)
-
-            # Create a helper class
-            meta_model = MetaModel()
-            meta_model.copy_params_from(model)
+            meta_optimizer.reset_lstm(keep_states=k > 0, model=model)
 
             loss_sum = 0
             for j in range(args.truncated_bptt_step):
@@ -60,16 +59,17 @@ for epoch in range(args.max_epoch):
 
                 # First we need to compute the gradients of the model
                 f_x = model(x)
-                loss = (f_x - y).pow(2).mean()
+                loss = loss_fn(f_x, y)
                 model.zero_grad()
                 loss.backward()
 
-                # Perfom a meta update
-                meta_optimizer.meta_update(meta_model, model)
+                # Perfom a meta update using gradients from model
+                # and return the current meta model saved in the optimizer
+                meta_model = meta_optimizer.meta_update(model)
 
                 # Compute a loss for a step the meta optimizer
                 f_x = meta_model(x)
-                loss = (f_x - y).pow(2).mean()
+                loss = loss_fn(f_x, y)
                 loss_sum += loss
 
             # Update the parameters of the meta optimizer
