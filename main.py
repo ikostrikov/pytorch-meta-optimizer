@@ -24,61 +24,84 @@ parser.add_argument('--max_epoch', type=int, default=100, metavar='N',
                     help='number of epoch (default: 100)')
 parser.add_argument('--hidden_size', type=int, default=10, metavar='N',
                     help='hidden size of the meta optimizer (default: 10)')
+parser.add_argument('--no-cuda', action='store_true', default=False,
+                    help='enables CUDA training')
 args = parser.parse_args()
+args.cuda = not args.no_cuda and torch.cuda.is_available()
 
 assert args.optimizer_steps % args.truncated_bptt_step == 0
 
-# Create a meta optimizer that wraps a model into a meta model
-# to keep track of the meta updates.
-meta_optimizer = MetaOptimizer(MetaModel(Model()), args.hidden_size)
-optimizer = optim.Adam(meta_optimizer.parameters(), lr=1e-3)
-loss_fn = lambda f_x, y: (f_x - y).pow(2).mean()
 
-for epoch in range(args.max_epoch):
-    decrease_in_loss = 0.0
-    for i in range(args.updates_per_epoch):
+def main():
+    # Create a meta optimizer that wraps a model into a meta model
+    # to keep track of the meta updates.
+    meta_model = Model()
+    if args.cuda:
+        meta_model.cuda()
 
-        # Sample a new model
-        model = Model()
+    meta_optimizer = MetaOptimizer(MetaModel(meta_model), args.hidden_size)
+    if args.cuda:
+        meta_optimizer.cuda()
 
-        x, y = get_batch(args.batch_size)
-        x, y = Variable(x), Variable(y)
+    optimizer = optim.Adam(meta_optimizer.parameters(), lr=1e-3)
+    loss_fn = lambda f_x, y: (f_x - y).pow(2).mean()
 
-        # Compute initial loss of the model
-        f_x = model(x)
-        initial_loss = loss_fn(f_x, y)
+    for epoch in range(args.max_epoch):
+        decrease_in_loss = 0.0
+        for i in range(args.updates_per_epoch):
 
-        for k in range(args.optimizer_steps // args.truncated_bptt_step):
-            # Keep states for truncated BPTT
-            meta_optimizer.reset_lstm(keep_states=k > 0, model=model)
+            # Sample a new model
+            model = Model()
+            if args.cuda:
+                model.cuda()
 
-            loss_sum = 0
-            for j in range(args.truncated_bptt_step):
-                x, y = get_batch(args.batch_size)
-                x, y = Variable(x), Variable(y)
+            x, y = get_batch(args.batch_size)
+            x, y = Variable(x), Variable(y)
+            if args.cuda:
+                x, y = x.cuda(), y.cuda()
 
-                # First we need to compute the gradients of the model
-                f_x = model(x)
-                loss = loss_fn(f_x, y)
-                model.zero_grad()
-                loss.backward()
+            # Compute initial loss of the model
+            f_x = model(x)
+            initial_loss = loss_fn(f_x, y)
 
-                # Perfom a meta update using gradients from model
-                # and return the current meta model saved in the optimizer
-                meta_model = meta_optimizer.meta_update(model)
+            for k in range(args.optimizer_steps // args.truncated_bptt_step):
+                # Keep states for truncated BPTT
+                meta_optimizer.reset_lstm(
+                    keep_states=k > 0, model=model, use_cuda=args.cuda)
 
-                # Compute a loss for a step the meta optimizer
-                f_x = meta_model(x)
-                loss = loss_fn(f_x, y)
-                loss_sum += loss
+                loss_sum = 0
+                for j in range(args.truncated_bptt_step):
+                    x, y = get_batch(args.batch_size)
+                    x, y = Variable(x), Variable(y)
+                    if args.cuda:
+                        x, y = x.cuda(), y.cuda()
 
-            # Update the parameters of the meta optimizer
-            meta_optimizer.zero_grad()
-            loss_sum.backward()
-            optimizer.step()
+                    # First we need to compute the gradients of the model
+                    f_x = model(x)
+                    loss = loss_fn(f_x, y)
+                    model.zero_grad()
+                    loss.backward()
 
-        # Compute relative decrease in the loss function w.r.t initial value
-        decrease_in_loss += loss.data[0] / initial_loss.data[0]
+                    # Perfom a meta update using gradients from model
+                    # and return the current meta model saved in the optimizer
+                    meta_model = meta_optimizer.meta_update(model)
 
-    print("Epoch: {}, average final/initial loss ratio: {}".format(epoch,
-                                                                   decrease_in_loss / args.updates_per_epoch))
+                    # Compute a loss for a step the meta optimizer
+                    f_x = meta_model(x)
+                    loss = loss_fn(f_x, y)
+                    loss_sum += loss
+
+                # Update the parameters of the meta optimizer
+                meta_optimizer.zero_grad()
+                loss_sum.backward()
+                optimizer.step()
+
+            # Compute relative decrease in the loss function w.r.t initial
+            # value
+            decrease_in_loss += loss.data[0] / initial_loss.data[0]
+
+        print("Epoch: {}, average final/initial loss ratio: {}".format(epoch,
+                                                                       decrease_in_loss / args.updates_per_epoch))
+
+if __name__ == "__main__":
+    main()

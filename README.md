@@ -12,6 +12,7 @@ python main.py
 - [x] Initial implementation
 - [x] Toy data
 - [x] LSTM updates
+- [ ] Refactor, find a better way to organize the modules
 - [ ] Compare with standard optimizers
 - [ ] Real data
 - [ ] More difficult models

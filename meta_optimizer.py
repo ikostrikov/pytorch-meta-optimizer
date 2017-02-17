@@ -24,7 +24,7 @@ class MetaOptimizer(nn.Module):
         self.linear2.weight.data.mul_(0.1)
         self.linear2.bias.data.fill_(0.0)
 
-    def reset_lstm(self, keep_states=False, model=None):
+    def reset_lstm(self, keep_states=False, model=None, use_cuda=False):
         self.meta_model.reset()
         self.meta_model.copy_params_from(model)
 
@@ -34,6 +34,8 @@ class MetaOptimizer(nn.Module):
         else:
             self.hx = Variable(torch.zeros(1, self.hidden_size))
             self.cx = Variable(torch.zeros(1, self.hidden_size))
+            if use_cuda:
+                self.hx, self.cx = self.hx.cuda(), self.cx.cuda()
 
     def forward(self, inputs):
         initial_size = inputs.size()
