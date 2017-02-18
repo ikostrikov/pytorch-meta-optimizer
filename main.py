@@ -19,10 +19,10 @@ parser.add_argument('--optimizer_steps', type=int, default=100, metavar='N',
                     help='number of meta optimizer steps (default: 100)')
 parser.add_argument('--truncated_bptt_step', type=int, default=20, metavar='N',
                     help='step at which it truncates bptt (default: 20)')
-parser.add_argument('--updates_per_epoch', type=int, default=10, metavar='N',
+parser.add_argument('--updates_per_epoch', type=int, default=100, metavar='N',
                     help='updates per epoch (default: 100)')
-parser.add_argument('--max_epoch', type=int, default=100, metavar='N',
-                    help='number of epoch (default: 100)')
+parser.add_argument('--max_epoch', type=int, default=10000, metavar='N',
+                    help='number of epoch (default: 10000)')
 parser.add_argument('--hidden_size', type=int, default=10, metavar='N',
                     help='hidden size of the meta optimizer (default: 10)')
 parser.add_argument('--no-cuda', action='store_true', default=False,
@@ -85,6 +85,9 @@ def main():
                     keep_states=k > 0, model=model, use_cuda=args.cuda)
 
                 loss_sum = 0
+                prev_loss = torch.zeros(1)
+                if args.cuda:
+                    prev_loss = prev_loss.cuda()
                 for j in range(args.truncated_bptt_step):
                     x, y = next(train_iter)
                     if args.cuda:
@@ -104,7 +107,10 @@ def main():
                     # Compute a loss for a step the meta optimizer
                     f_x = meta_model(x)
                     loss = F.nll_loss(f_x, y)
-                    loss_sum += loss
+
+                    loss_sum += (loss - Variable(prev_loss))
+
+                    prev_loss = loss.data
 
                 # Update the parameters of the meta optimizer
                 meta_optimizer.zero_grad()
@@ -117,7 +123,7 @@ def main():
             # value
             decrease_in_loss += loss.data[0] / initial_loss.data[0]
 
-        print("Epoch: {}, average final/initial loss ratio: {}".format(epoch,
+        print("Epoch: {}, final loss {}, average final/initial loss ratio: {}".format(epoch, loss.data[0],
                                                                        decrease_in_loss / args.updates_per_epoch))
 
 if __name__ == "__main__":
