@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from data import get_batch
-from meta_optimizer import MetaModel, MetaOptimizer
+from meta_optimizer import MetaModel, MetaOptimizer, FastMetaOptimizer
 from model import Model
 from torch.autograd import Variable
 from torchvision import datasets, transforms
@@ -56,7 +56,7 @@ def main():
     if args.cuda:
         meta_model.cuda()
 
-    meta_optimizer = MetaOptimizer(MetaModel(meta_model), args.num_layers, args.hidden_size)
+    meta_optimizer = FastMetaOptimizer(MetaModel(meta_model), args.num_layers, args.hidden_size)
     if args.cuda:
         meta_optimizer.cuda()
 
@@ -105,7 +105,7 @@ def main():
 
                     # Perfom a meta update using gradients from model
                     # and return the current meta model saved in the optimizer
-                    meta_model = meta_optimizer.meta_update(model)
+                    meta_model = meta_optimizer.meta_update(model, loss.data)
 
                     # Compute a loss for a step the meta optimizer
                     f_x = meta_model(x)

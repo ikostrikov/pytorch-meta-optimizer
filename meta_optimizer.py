@@ -67,7 +67,7 @@ class MetaOptimizer(nn.Module):
         x = self.linear2(x)
         return x.squeeze()
 
-    def meta_update(self, model_with_grads):
+    def meta_update(self, model_with_grads, loss):
         # First we need to create a flat version of parameters and gradients
         grads = []
 
@@ -82,6 +82,62 @@ class MetaOptimizer(nn.Module):
 
         # Meta update itself
         flat_params = flat_params + self(inputs)
+
+        self.meta_model.set_flat_params(flat_params)
+
+        # Finally, copy values from the meta model to the normal one.
+        self.meta_model.copy_params_to(model_with_grads)
+        return self.meta_model.model
+
+class FastMetaOptimizer(nn.Module):
+
+    def __init__(self, model, num_layers, hidden_size):
+        super(FastMetaOptimizer, self).__init__()
+        self.meta_model = model
+
+        self.linear1 = nn.Linear(6, 2)
+        self.linear1.bias.data[0] = 1
+
+    def forward(self, x):
+        # Gradients preprocessing
+        x = F.sigmoid(self.linear1(x))
+        return x.split(1, 1)
+
+    def reset_lstm(self, keep_states=False, model=None, use_cuda=False):
+        self.meta_model.reset()
+        self.meta_model.copy_params_from(model)
+
+        if keep_states:
+            self.f = Variable(self.f.data)
+            self.i = Variable(self.i.data)
+        else:
+            self.f = Variable(torch.zeros(1, 1))
+            self.i = Variable(torch.zeros(1, 1))
+            if use_cuda:
+                self.f = self.f.cuda()
+                self.i = self.i.cuda()
+
+    def meta_update(self, model_with_grads, loss):
+        # First we need to create a flat version of parameters and gradients
+        grads = []
+
+        for module in model_with_grads.children():
+            grads.append(module._parameters['weight'].grad.data.view(-1))
+            grads.append(module._parameters['bias'].grad.data.view(-1))
+
+        flat_params = self.meta_model.get_flat_params()
+        flat_grads = torch.cat(grads)
+
+        self.i = self.i.expand(flat_params.size(0), 1)
+        self.f = self.f.expand(flat_params.size(0), 1)
+
+        loss = loss.expand_as(flat_grads)
+        inputs = Variable(torch.cat((preprocess_gradients(flat_grads), flat_params.data, loss), 1))
+        inputs = torch.cat((inputs, self.f, self.i), 1)
+        self.f, self.i = self(inputs)
+
+        # Meta update itself
+        flat_params = self.f * flat_params - self.i * Variable(flat_grads)
 
         self.meta_model.set_flat_params(flat_params)
 

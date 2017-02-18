@@ -5,6 +5,7 @@ from torch.autograd import Variable
 
 
 class LayerNorm1D(nn.Module):
+
     def __init__(self, num_outputs, eps=1e-5, affine=True):
         super(LayerNorm1D, self).__init__()
         self.eps = eps
