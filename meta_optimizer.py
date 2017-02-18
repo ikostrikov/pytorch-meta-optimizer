@@ -69,11 +69,11 @@ class MetaOptimizer(nn.Module):
             params.append(module._parameters['bias'].view(-1))
 
         for module in model_with_grads.children():
-            grads.append(module._parameters['weight'].grad.view(-1))
-            grads.append(module._parameters['bias'].grad.view(-1))
+            grads.append(module._parameters['weight'].grad.data.view(-1))
+            grads.append(module._parameters['bias'].grad.data.view(-1))
 
         flat_params = torch.cat(params)
-        flat_grads = torch.cat(grads)
+        flat_grads = Variable(torch.cat(grads))
 
         # Meta update itself
         flat_params = flat_params + self(flat_grads)
