@@ -7,6 +7,9 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.autograd import Variable
 import math
+from utils import preprocess_gradients
+from layer_norm_lstm import LayerNormLSTMCell
+from layer_norm import LayerNorm1D
 
 class MetaOptimizer(nn.Module):
 
@@ -16,16 +19,12 @@ class MetaOptimizer(nn.Module):
 
         self.hidden_size = hidden_size
 
-        self.linear1 = nn.Linear(2, hidden_size)
+        self.linear1 = nn.Linear(3, hidden_size)
+        self.ln1 = LayerNorm1D(hidden_size)
 
         self.lstms = []
         for i in range(num_layers):
-            self.lstms.append(nn.LSTMCell(hidden_size, hidden_size))
-
-            self.lstms[-1].bias_ih.data.fill_(0)
-            self.lstms[-1].bias_hh.data.fill_(0)
-            self.lstms[-1].bias_hh.data[10:20].fill_(1)
-
+            self.lstms.append(LayerNormLSTMCell(hidden_size, hidden_size))
 
         self.linear2 = nn.Linear(hidden_size, 1)
         self.linear2.weight.data.mul_(0.1)
@@ -53,20 +52,9 @@ class MetaOptimizer(nn.Module):
                 if use_cuda:
                     self.hx[i], self.cx[i] = self.hx[i].cuda(), self.cx[i].cuda()
 
-    def forward(self, inputs):
-        initial_size = inputs.size()
-        x = inputs.view(-1, 1)
-
+    def forward(self, x):
         # Gradients preprocessing
-        p = 10
-        eps = 1e-6
-        indicator = (x.abs() > math.exp(-p)).float()
-        x1 = (x.abs() + eps).log() / p * indicator - (1 - indicator)
-        x2 = x.sign() * indicator + math.exp(p) * x * (1 - indicator)
-
-        x = torch.cat((x1, x2), 1)
-
-        x = F.tanh(self.linear1(x))
+        x = F.tanh(self.ln1(self.linear1(x)))
 
         for i in range(len(self.lstms)):
             if x.size(0) != self.hx[i].size(0):
@@ -77,8 +65,7 @@ class MetaOptimizer(nn.Module):
             x = self.hx[i]
 
         x = self.linear2(x)
-        x = x.view(*initial_size)
-        return x
+        return x.squeeze()
 
     def meta_update(self, model_with_grads):
         # First we need to create a flat version of parameters and gradients
@@ -89,10 +76,12 @@ class MetaOptimizer(nn.Module):
             grads.append(module._parameters['bias'].grad.data.view(-1))
 
         flat_params = self.meta_model.get_flat_params()
-        flat_grads = Variable(torch.cat(grads))
+        flat_grads = preprocess_gradients(torch.cat(grads))
+
+        inputs = Variable(torch.cat((flat_grads, flat_params.data), 1))
 
         # Meta update itself
-        flat_params = flat_params + self(flat_grads)
+        flat_params = flat_params + self(inputs)
 
         self.meta_model.set_flat_params(flat_params)
 
