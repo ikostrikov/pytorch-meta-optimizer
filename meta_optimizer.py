@@ -10,7 +10,7 @@ import math
 
 class MetaOptimizer(nn.Module):
 
-    def __init__(self, model, hidden_size):
+    def __init__(self, model, num_layers, hidden_size):
         super(MetaOptimizer, self).__init__()
         self.meta_model = model
 
@@ -18,27 +18,40 @@ class MetaOptimizer(nn.Module):
 
         self.linear1 = nn.Linear(2, hidden_size)
 
-        self.lstm = nn.LSTMCell(hidden_size, hidden_size)
+        self.lstms = []
+        for i in range(num_layers):
+            self.lstms.append(nn.LSTMCell(hidden_size, hidden_size))
 
-        self.lstm.bias_ih.data.fill_(0)
-        self.lstm.bias_hh.data.fill_(0)
-        self.lstm.bias_hh.data[10:20].fill_(1)
+            self.lstms[-1].bias_ih.data.fill_(0)
+            self.lstms[-1].bias_hh.data.fill_(0)
+            self.lstms[-1].bias_hh.data[10:20].fill_(1)
+
+
         self.linear2 = nn.Linear(hidden_size, 1)
         self.linear2.weight.data.mul_(0.1)
         self.linear2.bias.data.fill_(0.0)
+
+    def cuda(self):
+        super(MetaOptimizer, self).cuda()
+        for i in range(len(self.lstms)):
+            self.lstms[i].cuda()
 
     def reset_lstm(self, keep_states=False, model=None, use_cuda=False):
         self.meta_model.reset()
         self.meta_model.copy_params_from(model)
 
         if keep_states:
-            self.hx = Variable(self.hx.data)
-            self.cx = Variable(self.cx.data)
+            for i in range(len(self.lstms)):
+                self.hx[i] = Variable(self.hx[i].data)
+                self.cx[i] = Variable(self.cx[i].data)
         else:
-            self.hx = Variable(torch.zeros(1, self.hidden_size))
-            self.cx = Variable(torch.zeros(1, self.hidden_size))
-            if use_cuda:
-                self.hx, self.cx = self.hx.cuda(), self.cx.cuda()
+            self.hx = []
+            self.cx = []
+            for i in range(len(self.lstms)):
+                self.hx.append(Variable(torch.zeros(1, self.hidden_size)))
+                self.cx.append(Variable(torch.zeros(1, self.hidden_size)))
+                if use_cuda:
+                    self.hx[i], self.cx[i] = self.hx[i].cuda(), self.cx[i].cuda()
 
     def forward(self, inputs):
         initial_size = inputs.size()
@@ -55,12 +68,13 @@ class MetaOptimizer(nn.Module):
 
         x = F.tanh(self.linear1(x))
 
-        if x.size(0) != self.hx.size(0):
-            self.hx = self.hx.expand(x.size(0), self.hx.size(1))
-            self.cx = self.hx.expand(x.size(0), self.cx.size(1))
+        for i in range(len(self.lstms)):
+            if x.size(0) != self.hx[i].size(0):
+                self.hx[i] = self.hx[i].expand(x.size(0), self.hx[i].size(1))
+                self.cx[i] = self.cx[i].expand(x.size(0), self.cx[i].size(1))
 
-        self.hx, self.cx = self.lstm(x, (self.hx, self.cx))
-        x = self.hx
+            self.hx[i], self.cx[i] = self.lstms[i](x, (self.hx[i], self.cx[i]))
+            x = self.hx[i]
 
         x = self.linear2(x)
         x = x.view(*initial_size)
@@ -68,41 +82,19 @@ class MetaOptimizer(nn.Module):
 
     def meta_update(self, model_with_grads):
         # First we need to create a flat version of parameters and gradients
-        weight_shapes = []
-        bias_shapes = []
-
-        params = []
         grads = []
-
-        for module in self.meta_model.model.children():
-            weight_shapes.append(list(module._parameters['weight'].size()))
-            bias_shapes.append(list(module._parameters['bias'].size()))
-
-            params.append(module._parameters['weight'].view(-1))
-            params.append(module._parameters['bias'].view(-1))
 
         for module in model_with_grads.children():
             grads.append(module._parameters['weight'].grad.data.view(-1))
             grads.append(module._parameters['bias'].grad.data.view(-1))
 
-        flat_params = torch.cat(params)
+        flat_params = self.meta_model.get_flat_params()
         flat_grads = Variable(torch.cat(grads))
 
         # Meta update itself
         flat_params = flat_params + self(flat_grads)
 
-        # Restore original shapes
-        offset = 0
-        for i, module in enumerate(self.meta_model.model.children()):
-            weight_flat_size = reduce(mul, weight_shapes[i], 1)
-            bias_flat_size = reduce(mul, bias_shapes[i], 1)
-
-            module._parameters['weight'] = flat_params[
-                offset:offset + weight_flat_size].view(*weight_shapes[i])
-            module._parameters['bias'] = flat_params[
-                offset + weight_flat_size:offset + weight_flat_size + bias_flat_size].view(*bias_shapes[i])
-
-            offset += weight_flat_size + bias_flat_size
+        self.meta_model.set_flat_params(flat_params)
 
         # Finally, copy values from the meta model to the normal one.
         self.meta_model.copy_params_to(model_with_grads)
@@ -124,6 +116,32 @@ class MetaModel:
                 module._parameters['weight'].data)
             module._parameters['bias'] = Variable(
                 module._parameters['bias'].data)
+
+    def get_flat_params(self):
+        params = []
+
+        for module in self.model.children():
+            params.append(module._parameters['weight'].view(-1))
+            params.append(module._parameters['bias'].view(-1))
+
+        return torch.cat(params)
+
+    def set_flat_params(self, flat_params):
+        # Restore original shapes
+        offset = 0
+        for i, module in enumerate(self.model.children()):
+            weight_shape = module._parameters['weight'].size()
+            bias_shape = module._parameters['bias'].size()
+
+            weight_flat_size = reduce(mul, weight_shape, 1)
+            bias_flat_size = reduce(mul, bias_shape, 1)
+
+            module._parameters['weight'] = flat_params[
+                offset:offset + weight_flat_size].view(*weight_shape)
+            module._parameters['bias'] = flat_params[
+                offset + weight_flat_size:offset + weight_flat_size + bias_flat_size].view(*bias_shape)
+
+            offset += weight_flat_size + bias_flat_size
 
     def copy_params_from(self, model):
         for modelA, modelB in zip(self.model.parameters(), model.parameters()):

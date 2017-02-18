@@ -19,12 +19,14 @@ parser.add_argument('--optimizer_steps', type=int, default=100, metavar='N',
                     help='number of meta optimizer steps (default: 100)')
 parser.add_argument('--truncated_bptt_step', type=int, default=20, metavar='N',
                     help='step at which it truncates bptt (default: 20)')
-parser.add_argument('--updates_per_epoch', type=int, default=100, metavar='N',
+parser.add_argument('--updates_per_epoch', type=int, default=10, metavar='N',
                     help='updates per epoch (default: 100)')
 parser.add_argument('--max_epoch', type=int, default=10000, metavar='N',
                     help='number of epoch (default: 10000)')
 parser.add_argument('--hidden_size', type=int, default=10, metavar='N',
                     help='hidden size of the meta optimizer (default: 10)')
+parser.add_argument('--num_layers', type=int, default=2, metavar='N',
+                    help='number of LSTM layers (default: 2)')
 parser.add_argument('--no-cuda', action='store_true', default=False,
                     help='enables CUDA training')
 args = parser.parse_args()
@@ -54,7 +56,7 @@ def main():
     if args.cuda:
         meta_model.cuda()
 
-    meta_optimizer = MetaOptimizer(MetaModel(meta_model), args.hidden_size)
+    meta_optimizer = MetaOptimizer(MetaModel(meta_model), args.num_layers, args.hidden_size)
     if args.cuda:
         meta_optimizer.cuda()
 
@@ -62,6 +64,7 @@ def main():
 
     for epoch in range(args.max_epoch):
         decrease_in_loss = 0.0
+        final_loss = 0.0
         train_iter = iter(train_loader)
         for i in range(args.updates_per_epoch):
 
@@ -122,8 +125,9 @@ def main():
             # Compute relative decrease in the loss function w.r.t initial
             # value
             decrease_in_loss += loss.data[0] / initial_loss.data[0]
+            final_loss += loss.data[0]
 
-        print("Epoch: {}, final loss {}, average final/initial loss ratio: {}".format(epoch, loss.data[0],
+        print("Epoch: {}, final loss {}, average final/initial loss ratio: {}".format(epoch, final_loss / args.updates_per_epoch,
                                                                        decrease_in_loss / args.updates_per_epoch))
 
 if __name__ == "__main__":
