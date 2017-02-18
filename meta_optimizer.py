@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.autograd import Variable
-
+import math
 
 class MetaOptimizer(nn.Module):
 
@@ -16,10 +16,13 @@ class MetaOptimizer(nn.Module):
 
         self.hidden_size = hidden_size
 
-        self.linear1 = nn.Linear(1, hidden_size)
+        self.linear1 = nn.Linear(2, hidden_size)
 
         self.lstm = nn.LSTMCell(hidden_size, hidden_size)
 
+        self.lstm.bias_ih.data.fill_(0)
+        self.lstm.bias_hh.data.fill_(0)
+        self.lstm.bias_hh.data[10:20].fill_(1)
         self.linear2 = nn.Linear(hidden_size, 1)
         self.linear2.weight.data.mul_(0.1)
         self.linear2.bias.data.fill_(0.0)
@@ -40,6 +43,16 @@ class MetaOptimizer(nn.Module):
     def forward(self, inputs):
         initial_size = inputs.size()
         x = inputs.view(-1, 1)
+
+        # Gradients preprocessing
+        p = 10
+        eps = 1e-6
+        indicator = (x.abs() > math.exp(-p)).float()
+        x1 = (x.abs() + eps).log() / p * indicator - (1 - indicator)
+        x2 = x.sign() * indicator + math.exp(p) * x * (1 - indicator)
+
+        x = torch.cat((x1, x2), 1)
+
         x = F.tanh(self.linear1(x))
 
         if x.size(0) != self.hx.size(0):

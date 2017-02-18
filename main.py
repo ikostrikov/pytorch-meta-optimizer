@@ -10,15 +10,16 @@ from data import get_batch
 from meta_optimizer import MetaModel, MetaOptimizer
 from model import Model
 from torch.autograd import Variable
+from torchvision import datasets, transforms
 
 parser = argparse.ArgumentParser(description='PyTorch REINFORCE example')
-parser.add_argument('--batch_size', type=int, default=16, metavar='N',
-                    help='batch size (default: 16)')
-parser.add_argument('--optimizer_steps', type=int, default=20, metavar='N',
-                    help='number of meta optimizer steps (default: 20)')
-parser.add_argument('--truncated_bptt_step', type=int, default=10, metavar='N',
-                    help='step at which it truncates bptt (default: 10)')
-parser.add_argument('--updates_per_epoch', type=int, default=100, metavar='N',
+parser.add_argument('--batch_size', type=int, default=32, metavar='N',
+                    help='batch size (default: 32)')
+parser.add_argument('--optimizer_steps', type=int, default=100, metavar='N',
+                    help='number of meta optimizer steps (default: 100)')
+parser.add_argument('--truncated_bptt_step', type=int, default=20, metavar='N',
+                    help='step at which it truncates bptt (default: 20)')
+parser.add_argument('--updates_per_epoch', type=int, default=10, metavar='N',
                     help='updates per epoch (default: 100)')
 parser.add_argument('--max_epoch', type=int, default=100, metavar='N',
                     help='number of epoch (default: 100)')
@@ -31,6 +32,20 @@ args.cuda = not args.no_cuda and torch.cuda.is_available()
 
 assert args.optimizer_steps % args.truncated_bptt_step == 0
 
+kwargs = {'num_workers': 1, 'pin_memory': True} if args.cuda else {}
+train_loader = torch.utils.data.DataLoader(
+    datasets.MNIST('../data', train=True, download=True,
+                   transform=transforms.Compose([
+                       transforms.ToTensor(),
+                       transforms.Normalize((0.1307,), (0.3081,))
+                   ])),
+    batch_size=args.batch_size, shuffle=True, **kwargs)
+test_loader = torch.utils.data.DataLoader(
+    datasets.MNIST('../data', train=False, transform=transforms.Compose([
+                       transforms.ToTensor(),
+                       transforms.Normalize((0.1307,), (0.3081,))
+                   ])),
+    batch_size=args.batch_size, shuffle=True, **kwargs)
 
 def main():
     # Create a meta optimizer that wraps a model into a meta model
@@ -44,10 +59,10 @@ def main():
         meta_optimizer.cuda()
 
     optimizer = optim.Adam(meta_optimizer.parameters(), lr=1e-3)
-    loss_fn = lambda f_x, y: (f_x - y).pow(2).mean()
 
     for epoch in range(args.max_epoch):
         decrease_in_loss = 0.0
+        train_iter = iter(train_loader)
         for i in range(args.updates_per_epoch):
 
             # Sample a new model
@@ -55,14 +70,14 @@ def main():
             if args.cuda:
                 model.cuda()
 
-            x, y = get_batch(args.batch_size)
-            x, y = Variable(x), Variable(y)
+            x, y = next(train_iter)
             if args.cuda:
                 x, y = x.cuda(), y.cuda()
+            x, y = Variable(x), Variable(y)
 
             # Compute initial loss of the model
             f_x = model(x)
-            initial_loss = loss_fn(f_x, y)
+            initial_loss = F.nll_loss(f_x, y)
 
             for k in range(args.optimizer_steps // args.truncated_bptt_step):
                 # Keep states for truncated BPTT
@@ -71,14 +86,14 @@ def main():
 
                 loss_sum = 0
                 for j in range(args.truncated_bptt_step):
-                    x, y = get_batch(args.batch_size)
-                    x, y = Variable(x), Variable(y)
+                    x, y = next(train_iter)
                     if args.cuda:
                         x, y = x.cuda(), y.cuda()
+                    x, y = Variable(x), Variable(y)
 
                     # First we need to compute the gradients of the model
                     f_x = model(x)
-                    loss = loss_fn(f_x, y)
+                    loss = F.nll_loss(f_x, y)
                     model.zero_grad()
                     loss.backward()
 
@@ -88,7 +103,7 @@ def main():
 
                     # Compute a loss for a step the meta optimizer
                     f_x = meta_model(x)
-                    loss = loss_fn(f_x, y)
+                    loss = F.nll_loss(f_x, y)
                     loss_sum += loss
 
                 # Update the parameters of the meta optimizer

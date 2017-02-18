@@ -14,5 +14,5 @@ python main.py
 - [x] LSTM updates
 - [ ] Refactor, find a better way to organize the modules
 - [ ] Compare with standard optimizers
-- [ ] Real data
+- [x] Real data
 - [ ] More difficult models
