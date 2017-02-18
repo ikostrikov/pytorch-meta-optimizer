@@ -94,6 +94,8 @@ def main():
                 # Update the parameters of the meta optimizer
                 meta_optimizer.zero_grad()
                 loss_sum.backward()
+                for param in meta_optimizer.parameters():
+                    param.grad.data.clamp_(-1, 1)
                 optimizer.step()
 
             # Compute relative decrease in the loss function w.r.t initial
