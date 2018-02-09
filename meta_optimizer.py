@@ -137,7 +137,8 @@ class FastMetaOptimizer(nn.Module):
         self.f, self.i = self(inputs)
 
         # Meta update itself
-        flat_params = self.f * flat_params - self.i * Variable(flat_grads)
+        flat_params = torch.t(self.f) * flat_params - torch.t(self.i) * Variable(flat_grads)
+        flat_params = flat_params.view(-1)
 
         self.meta_model.set_flat_params(flat_params)
 
