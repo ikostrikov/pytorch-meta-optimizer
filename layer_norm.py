@@ -13,7 +13,7 @@ class LayerNorm1D(nn.Module):
         self.bias = nn.Parameter(torch.zeros(1, num_outputs))
 
     def forward(self, inputs):
-        input_mean = inputs.mean(1).expand_as(inputs)
-        input_std = inputs.std(1).expand_as(inputs)
+        input_mean = inputs.mean(1,keepdim=True).expand_as(inputs)
+        input_std = inputs.std(1,keepdim=True).expand_as(inputs)
         x = (inputs - input_mean) / (input_std + self.eps)
         return x * self.weight.expand_as(x) + self.bias.expand_as(x)
