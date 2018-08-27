@@ -122,10 +122,10 @@ class FastMetaOptimizer(nn.Module):
         grads = []
 
         for module in model_with_grads.children():
-            grads.append(module._parameters['weight'].grad.data.view(-1))
-            grads.append(module._parameters['bias'].grad.data.view(-1))
+            grads.append(module._parameters['weight'].grad.data.view(-1).unsqueeze(-1))
+            grads.append(module._parameters['bias'].grad.data.view(-1).unsqueeze(-1))
 
-        flat_params = self.meta_model.get_flat_params()
+        flat_params = self.meta_model.get_flat_params().unsqueeze(-1)
         flat_grads = torch.cat(grads)
 
         self.i = self.i.expand(flat_params.size(0), 1)
@@ -137,7 +137,7 @@ class FastMetaOptimizer(nn.Module):
         self.f, self.i = self(inputs)
 
         # Meta update itself
-        flat_params = torch.t(self.f) * flat_params - torch.t(self.i) * Variable(flat_grads)
+        flat_params = self.f * flat_params - self.i * Variable(flat_grads)
         flat_params = flat_params.view(-1)
 
         self.meta_model.set_flat_params(flat_params)
